@@ -18,21 +18,37 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Variables de entorno
 - `DB_URL`: por defecto `sqlite:///./hourly_checkin.db`
-- `API_TOKEN`: token unico para el MVP
 - `CORS_ALLOW_ORIGINS`: lista separada por comas o `*`
+
+## Nota sobre UTC y zona horaria
+- `ts_hour_utc` y `created_at` se guardan en UTC.
+- La API responde `ts_hour_local` y `created_at_local` en la zona horaria del usuario.
+- Si llega un datetime sin zona horaria, se asume la timezone del usuario para calcular la hora local.
+- Si venis de una version con timestamps naive, borra `hourly_checkin.db` y recrea la base.
 
 ## Rutas
 - `GET /health`
-- `POST /checkins` (upsert por `user_id` + `ts_hour`)
-- `GET /checkins?user_id=...&from=...&to=...`
+- `POST /users` (crear usuario + token)
+- `GET /users/me`
+- `PATCH /users/me`
+- `POST /checkins` (upsert por `user_id` + `ts_hour_utc`)
+- `GET /checkins?from=...&to=...`
 
 ## Ejemplos con curl
 ```bash
-curl -X POST http://localhost:8000/checkins \
-  -H "Authorization: Bearer changeme" \
+curl -X POST http://localhost:8000/users \
   -H "Content-Type: application/json" \
   -d '{
     "user_id": "marce",
+    "timezone": "America/Argentina/Buenos_Aires"
+  }'
+```
+
+```bash
+curl -X POST http://localhost:8000/checkins \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
     "ts_hour": "2026-01-09T14:00:00-03:00",
     "activity": "trabajo",
     "emotion": "bien",
@@ -44,6 +60,6 @@ curl -X POST http://localhost:8000/checkins \
 ```
 
 ```bash
-curl "http://localhost:8000/checkins?user_id=marce&from=2026-01-09T06:00:00-03:00&to=2026-01-09T23:00:00-03:00" \
-  -H "Authorization: Bearer changeme"
+curl "http://localhost:8000/checkins?from=2026-01-09T06:00:00-03:00&to=2026-01-09T23:00:00-03:00" \
+  -H "Authorization: Bearer <TOKEN>"
 ```

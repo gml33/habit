@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  api:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      API_TOKEN: changeme
+      DB_URL: sqlite:///./hourly_checkin.db
+      CORS_ALLOW_ORIGINS: "*"
+    volumes:
+      - ./backend/hourly_checkin.db:/app/hourly_checkin.db
+
+  web:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - "5173:80"
+    depends_on:
+      - api

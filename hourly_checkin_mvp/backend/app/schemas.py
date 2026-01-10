@@ -1,7 +1,9 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator
+
+from .time_utils import datetime_to_utc_iso, validate_timezone
 
 
 class ActivityEnum(str, Enum):
@@ -49,8 +51,7 @@ class SourceEnum(str, Enum):
     backfill = "carga_historica"
 
 
-class CheckinBase(BaseModel):
-    user_id: str
+class CheckinCreate(BaseModel):
     ts_hour: datetime
     activity: ActivityEnum
     emotion: EmotionEnum
@@ -67,25 +68,67 @@ class CheckinBase(BaseModel):
         trimmed = value.strip()
         return trimmed or None
 
-
-class CheckinCreate(CheckinBase):
-    pass
+    model_config = {"extra": "ignore"}
 
 
-class CheckinOut(CheckinBase):
+class CheckinOut(BaseModel):
     id: int
-    created_at: datetime
-
-    model_config = {"from_attributes": True}
-
-
-class UserAuth(BaseModel):
-    user_id: str = Field(min_length=3, max_length=64)
-    password: str = Field(min_length=6, max_length=128)
-
-
-class UserOut(BaseModel):
     user_id: str
+    ts_hour_utc: datetime
+    ts_hour_local: str
+    activity: ActivityEnum
+    emotion: EmotionEnum
+    energy: EnergyEnum
+    stress: StressEnum
+    note: str | None
+    source: SourceEnum
+    created_at_utc: datetime
+    created_at_local: str
+
+    @field_serializer("ts_hour_utc", when_used="json")
+    def serialize_ts_hour_utc(self, value: datetime) -> str:
+        return datetime_to_utc_iso(value)
+
+    @field_serializer("created_at_utc", when_used="json")
+    def serialize_created_at_utc(self, value: datetime) -> str:
+        return datetime_to_utc_iso(value)
+
+
+class UserCreate(BaseModel):
+    user_id: str = Field(min_length=3, max_length=64)
+    display_name: str | None = Field(default=None, max_length=120)
+    timezone: str = Field(default="America/Argentina/Buenos_Aires")
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone_value(cls, value: str) -> str:
+        validate_timezone(value)
+        return value
+
+
+class UserCreatedOut(BaseModel):
+    user_id: str
+    display_name: str | None
+    timezone: str
+    api_token: str
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+
+class UserMeOut(BaseModel):
+    user_id: str
+    display_name: str | None
+    timezone: str
+    created_at: datetime
+
+
+class UserUpdate(BaseModel):
+    display_name: str | None = Field(default=None, max_length=120)
+    timezone: str | None = Field(default=None)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone_value(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        validate_timezone(value)
+        return value

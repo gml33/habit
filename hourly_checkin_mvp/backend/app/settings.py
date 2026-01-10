@@ -3,7 +3,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     db_url: str = "sqlite:///./hourly_checkin.db"
-    api_token: str = "changeme"
     cors_allow_origins: str = "*"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="")

@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useLocation } from 'react-router-dom'
+import { formatDateTimeAR } from './utils/datetime'
 
 type CheckinPayload = {
   user_id: string
@@ -83,31 +84,6 @@ const stressLabels: Record<string, string> = {
   alto: 'Alto',
 }
 
-const normalizeToHour = (date: Date) => {
-  const normalized = new Date(date)
-  normalized.setMinutes(0, 0, 0)
-  return normalized
-}
-
-const pad2 = (value: number) => String(value).padStart(2, '0')
-
-const formatHourLabel = (date: Date) => {
-  if (Number.isNaN(date.getTime())) return '--:--'
-  const label = date.toLocaleString('es-AR', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-  const offsetMinutes = -date.getTimezoneOffset()
-  const sign = offsetMinutes >= 0 ? '+' : '-'
-  const absOffset = Math.abs(offsetMinutes)
-  const offset = `${sign}${pad2(Math.floor(absOffset / 60))}:${pad2(absOffset % 60)}`
-  return `${label} UTC${offset}`
-}
-
 const readErrorDetail = async (response: Response) => {
   const text = await response.text()
   if (!text) return 'Error inesperado'
@@ -148,14 +124,10 @@ function CheckinPage() {
   const token = (params.get('token') || '').trim()
   const tsHourParam = params.get('ts_hour')
 
-  const parsedTsHour = useMemo(() => {
-    if (!tsHourParam) return null
-    const parsed = new Date(tsHourParam)
-    return Number.isNaN(parsed.getTime()) ? null : parsed
+  const displayHourLabel = useMemo(() => {
+    if (!tsHourParam) return '—'
+    return formatDateTimeAR(tsHourParam)
   }, [tsHourParam])
-
-  const fallbackTsHour = useMemo(() => normalizeToHour(new Date()), [])
-  const displayTsHour = normalizeToHour(parsedTsHour ?? fallbackTsHour)
   const [activity, setActivity] = useState(activityOptions[0])
   const [emotion, setEmotion] = useState(emotionOptions[0])
   const [energy, setEnergy] = useState(energyOptions[0])
@@ -222,7 +194,11 @@ function CheckinPage() {
           </div>
           <div>
             <span className="meta-label">Hora</span>
-            <strong>{formatHourLabel(displayTsHour)}</strong>
+            <strong>
+              {displayHourLabel === 'Hora invalida' || displayHourLabel === '—'
+                ? displayHourLabel
+                : `${displayHourLabel} (UTC-3)`}
+            </strong>
           </div>
         </section>
 

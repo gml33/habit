@@ -1,43 +1,15 @@
-from datetime import datetime
+from datetime import date, datetime, time
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..db import get_db
-from ..settings import settings
+from ..deps import get_current_user
+from ..time_utils import floor_to_hour_local, to_local_iso, to_utc, validate_timezone
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
-
-
-def verify_token(
-    authorization: str | None = Header(default=None),
-    token: str | None = Query(default=None),
-) -> str:
-    provided = None
-    if authorization:
-        parts = authorization.split()
-        if len(parts) == 2 and parts[0].lower() == "bearer":
-            provided = parts[1]
-    if not provided and token:
-        provided = token
-    if not provided or provided != settings.api_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalido",
-        )
-    return provided
-
-
-def normalize_to_hour(value: datetime, field_name: str = "ts_hour") -> datetime:
-    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{field_name} debe incluir zona horaria",
-        )
-    return value.replace(minute=0, second=0, microsecond=0)
-
 
 def apply_checkin_update(record: models.Checkin, payload: schemas.CheckinCreate) -> None:
     record.activity = payload.activity
@@ -48,15 +20,42 @@ def apply_checkin_update(record: models.Checkin, payload: schemas.CheckinCreate)
     record.source = payload.source
 
 
-@router.post("", response_model=schemas.CheckinOut, dependencies=[Depends(verify_token)])
-def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)):
-    normalized_ts = normalize_to_hour(payload.ts_hour)
+def build_checkin_out(record: models.Checkin, user_tz) -> schemas.CheckinOut:
+    return schemas.CheckinOut(
+        id=record.id,
+        user_id=record.user_id,
+        ts_hour_utc=record.ts_hour_utc,
+        ts_hour_local=to_local_iso(record.ts_hour_utc, user_tz),
+        activity=record.activity,
+        emotion=record.emotion,
+        energy=record.energy,
+        stress=record.stress,
+        note=record.note,
+        source=record.source,
+        created_at_utc=record.created_at,
+        created_at_local=to_local_iso(record.created_at, user_tz),
+    )
+
+
+@router.post("", response_model=schemas.CheckinOut)
+def upsert_checkin(
+    payload: schemas.CheckinCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        user_tz = validate_timezone(current_user.timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    local_hour = floor_to_hour_local(payload.ts_hour, user_tz)
+    normalized_ts = to_utc(local_hour, user_tz)
 
     record = (
         db.query(models.Checkin)
         .filter(
-            models.Checkin.user_id == payload.user_id,
-            models.Checkin.ts_hour == normalized_ts,
+            models.Checkin.user_id == current_user.user_id,
+            models.Checkin.ts_hour_utc == normalized_ts,
         )
         .first()
     )
@@ -65,8 +64,8 @@ def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)
         apply_checkin_update(record, payload)
     else:
         record = models.Checkin(
-            user_id=payload.user_id,
-            ts_hour=normalized_ts,
+            user_id=current_user.user_id,
+            ts_hour_utc=normalized_ts,
             activity=payload.activity,
             emotion=payload.emotion,
             energy=payload.energy,
@@ -83,8 +82,8 @@ def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)
         record = (
             db.query(models.Checkin)
             .filter(
-                models.Checkin.user_id == payload.user_id,
-                models.Checkin.ts_hour == normalized_ts,
+                models.Checkin.user_id == current_user.user_id,
+                models.Checkin.ts_hour_utc == normalized_ts,
             )
             .first()
         )
@@ -92,8 +91,8 @@ def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)
             apply_checkin_update(record, payload)
         else:
             record = models.Checkin(
-                user_id=payload.user_id,
-                ts_hour=normalized_ts,
+                user_id=current_user.user_id,
+                ts_hour_utc=normalized_ts,
                 activity=payload.activity,
                 emotion=payload.emotion,
                 energy=payload.energy,
@@ -105,23 +104,45 @@ def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)
         db.commit()
 
     db.refresh(record)
-    return record
+    return build_checkin_out(record, user_tz)
 
 
-@router.get("", response_model=list[schemas.CheckinOut], dependencies=[Depends(verify_token)])
+@router.get("", response_model=list[schemas.CheckinOut])
 def list_checkins(
-    user_id: str = Query(...),
     from_: datetime | None = Query(default=None, alias="from"),
     to_: datetime | None = Query(default=None, alias="to"),
+    day: date | None = Query(default=None),
+    user_id: str | None = Query(default=None),
+    current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    query = db.query(models.Checkin).filter(models.Checkin.user_id == user_id)
+    if user_id and user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No autorizado para ese usuario",
+        )
 
-    if from_:
-        normalized_from = normalize_to_hour(from_, field_name="from")
-        query = query.filter(models.Checkin.ts_hour >= normalized_from)
-    if to_:
-        normalized_to = normalize_to_hour(to_, field_name="to")
-        query = query.filter(models.Checkin.ts_hour <= normalized_to)
+    try:
+        user_tz = validate_timezone(current_user.timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
 
-    return query.order_by(models.Checkin.ts_hour.asc()).all()
+    query = db.query(models.Checkin).filter(models.Checkin.user_id == current_user.user_id)
+
+    if day:
+        start_local = datetime.combine(day, time.min).replace(tzinfo=user_tz)
+        end_local = datetime.combine(day, time.max).replace(tzinfo=user_tz)
+        query = query.filter(
+            models.Checkin.ts_hour_utc >= to_utc(start_local, user_tz),
+            models.Checkin.ts_hour_utc <= to_utc(end_local, user_tz),
+        )
+    else:
+        if from_:
+            local_from = floor_to_hour_local(from_, user_tz)
+            query = query.filter(models.Checkin.ts_hour_utc >= to_utc(local_from, user_tz))
+        if to_:
+            local_to = floor_to_hour_local(to_, user_tz)
+            query = query.filter(models.Checkin.ts_hour_utc <= to_utc(local_to, user_tz))
+
+    records = query.order_by(models.Checkin.ts_hour_utc.asc()).all()
+    return [build_checkin_out(record, user_tz) for record in records]
