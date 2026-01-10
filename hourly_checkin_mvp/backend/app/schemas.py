@@ -1,52 +1,52 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class ActivityEnum(str, Enum):
-    sleep = "sleep"
-    work = "work"
-    hobbies = "hobbies"
-    exercise = "exercise"
-    leisure = "leisure"
-    partner = "partner"
-    family = "family"
-    chores = "chores"
-    travel = "travel"
-    misc = "misc"
+    sleep = "dormir"
+    work = "trabajo"
+    hobbies = "pasatiempos"
+    exercise = "ejercicio"
+    leisure = "tiempo_libre"
+    partner = "pareja"
+    family = "familia"
+    chores = "tareas"
+    travel = "viaje"
+    misc = "otros"
 
 
 class EmotionEnum(str, Enum):
-    fine = "fine"
-    happy = "happy"
-    excited = "excited"
-    sad = "sad"
-    sensitive = "sensitive"
-    anxious = "anxious"
-    insecure = "insecure"
-    angry = "angry"
-    irritated = "irritated"
+    fine = "bien"
+    happy = "feliz"
+    excited = "entusiasmado"
+    sad = "triste"
+    sensitive = "sensible"
+    anxious = "ansioso"
+    insecure = "inseguro"
+    angry = "enojado"
+    irritated = "irritable"
     neutral = "neutral"
-    emotional = "emotional"
+    emotional = "emocional"
 
 
 class EnergyEnum(str, Enum):
-    tired = "tired"
-    okay = "okay"
-    energized = "energized"
+    tired = "cansado"
+    okay = "ok"
+    energized = "con_energia"
 
 
 class StressEnum(str, Enum):
-    low = "low"
-    medium = "medium"
-    high = "high"
+    low = "bajo"
+    medium = "medio"
+    high = "alto"
 
 
 class SourceEnum(str, Enum):
-    notification = "notification"
+    notification = "notificacion"
     manual = "manual"
-    backfill = "backfill"
+    backfill = "carga_historica"
 
 
 class CheckinBase(BaseModel):
@@ -58,13 +58,6 @@ class CheckinBase(BaseModel):
     stress: StressEnum
     note: str | None = Field(default=None, max_length=140)
     source: SourceEnum
-
-    @field_validator("ts_hour")
-    @classmethod
-    def normalize_ts_hour(cls, value: datetime) -> datetime:
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.replace(minute=0, second=0, microsecond=0)
 
     @field_validator("note")
     @classmethod

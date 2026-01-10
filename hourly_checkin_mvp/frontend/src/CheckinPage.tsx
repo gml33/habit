@@ -1,0 +1,322 @@
+import { useMemo, useState, type FormEvent } from 'react'
+import { useLocation } from 'react-router-dom'
+
+type CheckinPayload = {
+  user_id: string
+  ts_hour: string
+  activity: string
+  emotion: string
+  energy: string
+  stress: string
+  note?: string | null
+  source: string
+}
+
+const activityOptions = [
+  'dormir',
+  'trabajo',
+  'pasatiempos',
+  'ejercicio',
+  'tiempo_libre',
+  'pareja',
+  'familia',
+  'tareas',
+  'viaje',
+  'otros',
+]
+
+const emotionOptions = [
+  'bien',
+  'feliz',
+  'entusiasmado',
+  'triste',
+  'sensible',
+  'ansioso',
+  'inseguro',
+  'enojado',
+  'irritable',
+  'neutral',
+  'emocional',
+]
+
+const energyOptions = ['cansado', 'ok', 'con_energia']
+const stressOptions = ['bajo', 'medio', 'alto']
+
+const apiBase = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+
+const activityLabels: Record<string, string> = {
+  dormir: 'Dormir',
+  trabajo: 'Trabajo',
+  pasatiempos: 'Pasatiempos',
+  ejercicio: 'Ejercicio',
+  tiempo_libre: 'Tiempo libre',
+  pareja: 'Pareja',
+  familia: 'Familia',
+  tareas: 'Tareas',
+  viaje: 'Viaje',
+  otros: 'Otros',
+}
+
+const emotionLabels: Record<string, string> = {
+  bien: 'Bien',
+  feliz: 'Feliz',
+  entusiasmado: 'Entusiasmado',
+  triste: 'Triste',
+  sensible: 'Sensible',
+  ansioso: 'Ansioso',
+  inseguro: 'Inseguro',
+  enojado: 'Enojado',
+  irritable: 'Irritable',
+  neutral: 'Neutral',
+  emocional: 'Emocional',
+}
+
+const energyLabels: Record<string, string> = {
+  cansado: 'Cansado',
+  ok: 'OK',
+  con_energia: 'Con energia',
+}
+
+const stressLabels: Record<string, string> = {
+  bajo: 'Bajo',
+  medio: 'Medio',
+  alto: 'Alto',
+}
+
+const normalizeToHour = (date: Date) => {
+  const normalized = new Date(date)
+  normalized.setMinutes(0, 0, 0)
+  return normalized
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0')
+
+const formatIsoWithOffset = (date: Date) => {
+  const tzOffset = -date.getTimezoneOffset()
+  const sign = tzOffset >= 0 ? '+' : '-'
+  const absOffset = Math.abs(tzOffset)
+  const offsetHours = pad2(Math.floor(absOffset / 60))
+  const offsetMinutes = pad2(absOffset % 60)
+
+  return (
+    `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}` +
+    `T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}` +
+    `${sign}${offsetHours}:${offsetMinutes}`
+  )
+}
+
+const formatHourLabel = (date: Date) => {
+  if (Number.isNaN(date.getTime())) return '--:--'
+  const label = date.toLocaleString('es-AR', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+  const offsetMinutes = -date.getTimezoneOffset()
+  const sign = offsetMinutes >= 0 ? '+' : '-'
+  const absOffset = Math.abs(offsetMinutes)
+  const offset = `${sign}${pad2(Math.floor(absOffset / 60))}:${pad2(absOffset % 60)}`
+  return `${label} UTC${offset}`
+}
+
+const readErrorDetail = async (response: Response) => {
+  const text = await response.text()
+  if (!text) return 'Error inesperado'
+  try {
+    const data = JSON.parse(text) as { detail?: unknown }
+    if (typeof data.detail === 'string') return data.detail
+  } catch (err) {
+    return text
+  }
+  return text
+}
+
+const buildMissingParamsMessage = (params: string[]) => {
+  if (!params.length) return ''
+  return `Faltan parametros en la URL: ${params.join(', ')}`
+}
+
+function CheckinPage() {
+  const location = useLocation()
+  const params = useMemo(() => new URLSearchParams(location.search), [location.search])
+  const userId = (params.get('user_id') || '').trim()
+  const token = (params.get('token') || '').trim()
+  const tsHourParam = params.get('ts_hour')
+
+  const parsedTsHour = useMemo(() => {
+    if (!tsHourParam) return null
+    const parsed = new Date(tsHourParam)
+    return Number.isNaN(parsed.getTime()) ? null : parsed
+  }, [tsHourParam])
+
+  const fallbackTsHour = useMemo(() => normalizeToHour(new Date()), [])
+  const displayTsHour = normalizeToHour(parsedTsHour ?? fallbackTsHour)
+  const tsHourValue = tsHourParam && parsedTsHour ? tsHourParam : formatIsoWithOffset(fallbackTsHour)
+
+  const [activity, setActivity] = useState(activityOptions[0])
+  const [emotion, setEmotion] = useState(emotionOptions[0])
+  const [energy, setEnergy] = useState(energyOptions[0])
+  const [stress, setStress] = useState(stressOptions[0])
+  const [note, setNote] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState('')
+
+  const missingParams = [
+    ...(userId ? [] : ['user_id']),
+    ...(token ? [] : ['token']),
+    ...(tsHourParam ? [] : ['ts_hour']),
+  ]
+
+  const warningMessage = buildMissingParamsMessage(missingParams)
+  const canSubmit = Boolean(userId && token)
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    if (!canSubmit) {
+      setError('Completa user_id y token en la URL.')
+      return
+    }
+
+    setError('')
+    setLoading(true)
+    setSaved(false)
+
+    const payload: CheckinPayload = {
+      user_id: userId,
+      ts_hour: tsHourValue,
+      activity,
+      emotion,
+      energy,
+      stress,
+      note: note.trim() ? note.trim() : null,
+      source: 'manual',
+    }
+
+    try {
+      const response = await fetch(`${apiBase}/checkins`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      })
+
+      if (!response.ok) {
+        const detail = await readErrorDetail(response)
+        throw new Error(detail || 'Error al guardar')
+      }
+
+      setSaved(true)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Error inesperado'
+      setError(message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="app">
+      <main className="card">
+        <header className="header">
+          <p className="eyebrow">Check-in horario</p>
+          <h1>Check-in horario</h1>
+          <p className="subtle">Completa en menos de 15 segundos.</p>
+        </header>
+
+        <section className="meta">
+          <div>
+            <span className="meta-label">Usuario</span>
+            <strong>{userId || '—'}</strong>
+          </div>
+          <div>
+            <span className="meta-label">Hora</span>
+            <strong>{formatHourLabel(displayTsHour)}</strong>
+          </div>
+        </section>
+
+        {warningMessage ? <p className="warning">{warningMessage}</p> : null}
+
+        {saved ? (
+          <section className="success">
+            <p className="success-text">Guardado ✅</p>
+            <button className="secondary" type="button" onClick={() => setSaved(false)}>
+              Editar
+            </button>
+          </section>
+        ) : (
+          <form className="form" onSubmit={handleSubmit}>
+            <label>
+              Actividad
+              <select value={activity} onChange={(event) => setActivity(event.target.value)}>
+                {activityOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {activityLabels[option] ?? option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Emocion
+              <select value={emotion} onChange={(event) => setEmotion(event.target.value)}>
+                {emotionOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {emotionLabels[option] ?? option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Energia
+              <select value={energy} onChange={(event) => setEnergy(event.target.value)}>
+                {energyOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {energyLabels[option] ?? option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Estres
+              <select value={stress} onChange={(event) => setStress(event.target.value)}>
+                {stressOptions.map((option) => (
+                  <option key={option} value={option}>
+                    {stressLabels[option] ?? option}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              Nota (opcional)
+              <textarea
+                maxLength={140}
+                rows={3}
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                placeholder="Algun detalle rapido..."
+              />
+              <span className="counter">{note.length}/140</span>
+            </label>
+
+            {error ? <p className="error">{error}</p> : null}
+
+            <button type="submit" disabled={!canSubmit || loading}>
+              {loading ? 'Guardando...' : 'Guardar'}
+            </button>
+          </form>
+        )}
+      </main>
+    </div>
+  )
+}
+
+export default CheckinPage

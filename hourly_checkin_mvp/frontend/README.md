@@ -1,4 +1,4 @@
-# Hourly Check-in Frontend
+# Frontend de Check-in horario
 
 ## Requisitos
 - Node.js 18+

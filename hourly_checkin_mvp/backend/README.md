@@ -1,9 +1,9 @@
-# Hourly Check-in API (FastAPI)
+# API de Check-in horario (FastAPI)
 
 ## Requisitos
 - Python 3.11+
 
-## Setup rapido
+## Configuracion rapida
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -21,7 +21,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `API_TOKEN`: token unico para el MVP
 - `CORS_ALLOW_ORIGINS`: lista separada por comas o `*`
 
-## Endpoints
+## Rutas
 - `GET /health`
 - `POST /checkins` (upsert por `user_id` + `ts_hour`)
 - `GET /checkins?user_id=...&from=...&to=...`
@@ -34,12 +34,12 @@ curl -X POST http://localhost:8000/checkins \
   -d '{
     "user_id": "marce",
     "ts_hour": "2026-01-09T14:00:00-03:00",
-    "activity": "work",
-    "emotion": "fine",
-    "energy": "okay",
-    "stress": "medium",
+    "activity": "trabajo",
+    "emotion": "bien",
+    "energy": "ok",
+    "stress": "medio",
     "note": "Enfocado en tareas clave",
-    "source": "notification"
+    "source": "notificacion"
   }'
 ```
 

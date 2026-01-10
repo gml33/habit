@@ -1,8 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -26,44 +25,86 @@ def verify_token(
     if not provided or provided != settings.api_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
+            detail="Token invalido",
         )
     return provided
 
 
+def normalize_to_hour(value: datetime, field_name: str = "ts_hour") -> datetime:
+    if value.tzinfo is None or value.tzinfo.utcoffset(value) is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_name} debe incluir zona horaria",
+        )
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def apply_checkin_update(record: models.Checkin, payload: schemas.CheckinCreate) -> None:
+    record.activity = payload.activity
+    record.emotion = payload.emotion
+    record.energy = payload.energy
+    record.stress = payload.stress
+    record.note = payload.note
+    record.source = payload.source
+
+
 @router.post("", response_model=schemas.CheckinOut, dependencies=[Depends(verify_token)])
 def upsert_checkin(payload: schemas.CheckinCreate, db: Session = Depends(get_db)):
-    data = payload.model_dump()
-    data["created_at"] = datetime.now(timezone.utc)
-
-    insert_stmt = (
-        sqlite_insert(models.Checkin)
-        if db.bind.dialect.name == "sqlite"
-        else pg_insert(models.Checkin)
-    )
-
-    stmt = insert_stmt.values(**data)
-    update_fields = {
-        key: value
-        for key, value in data.items()
-        if key not in {"user_id", "ts_hour", "created_at"}
-    }
-    stmt = stmt.on_conflict_do_update(
-        index_elements=["user_id", "ts_hour"],
-        set_=update_fields,
-    )
-
-    db.execute(stmt)
-    db.commit()
+    normalized_ts = normalize_to_hour(payload.ts_hour)
 
     record = (
         db.query(models.Checkin)
         .filter(
             models.Checkin.user_id == payload.user_id,
-            models.Checkin.ts_hour == payload.ts_hour,
+            models.Checkin.ts_hour == normalized_ts,
         )
         .first()
     )
+
+    if record:
+        apply_checkin_update(record, payload)
+    else:
+        record = models.Checkin(
+            user_id=payload.user_id,
+            ts_hour=normalized_ts,
+            activity=payload.activity,
+            emotion=payload.emotion,
+            energy=payload.energy,
+            stress=payload.stress,
+            note=payload.note,
+            source=payload.source,
+        )
+        db.add(record)
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        record = (
+            db.query(models.Checkin)
+            .filter(
+                models.Checkin.user_id == payload.user_id,
+                models.Checkin.ts_hour == normalized_ts,
+            )
+            .first()
+        )
+        if record:
+            apply_checkin_update(record, payload)
+        else:
+            record = models.Checkin(
+                user_id=payload.user_id,
+                ts_hour=normalized_ts,
+                activity=payload.activity,
+                emotion=payload.emotion,
+                energy=payload.energy,
+                stress=payload.stress,
+                note=payload.note,
+                source=payload.source,
+            )
+            db.add(record)
+        db.commit()
+
+    db.refresh(record)
     return record
 
 
@@ -77,8 +118,10 @@ def list_checkins(
     query = db.query(models.Checkin).filter(models.Checkin.user_id == user_id)
 
     if from_:
-        query = query.filter(models.Checkin.ts_hour >= from_)
+        normalized_from = normalize_to_hour(from_, field_name="from")
+        query = query.filter(models.Checkin.ts_hour >= normalized_from)
     if to_:
-        query = query.filter(models.Checkin.ts_hour <= to_)
+        normalized_to = normalize_to_hour(to_, field_name="to")
+        query = query.filter(models.Checkin.ts_hour <= normalized_to)
 
     return query.order_by(models.Checkin.ts_hour.asc()).all()

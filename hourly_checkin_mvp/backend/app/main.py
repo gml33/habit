@@ -6,7 +6,7 @@ from .routers.auth import router as auth_router
 from .routers.checkins import router as checkins_router
 from .settings import settings
 
-app = FastAPI(title="Hourly Check-in API", version="0.1.0")
+app = FastAPI(title="API de Check-in horario", version="0.1.0")
 
 origins = settings.cors_origins()
 app.add_middleware(

@@ -1,4 +1,4 @@
-# n8n - Hourly Check-in
+# n8n - Check-in horario
 
 ## Importar workflow
 1. Abri n8n.
