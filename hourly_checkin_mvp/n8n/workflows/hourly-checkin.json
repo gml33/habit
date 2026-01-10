@@ -1,0 +1,65 @@
+{
+  "name": "Hourly Check-in",
+  "nodes": [
+    {
+      "parameters": {
+        "triggerTimes": [
+          {
+            "mode": "everyHour",
+            "minute": 0
+          }
+        ]
+      },
+      "name": "Cron",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const now = new Date();\nnow.setMinutes(0, 0, 0);\nconst pad = (value) => String(value).padStart(2, '0');\nconst tzOffset = -now.getTimezoneOffset();\nconst sign = tzOffset >= 0 ? '+' : '-';\nconst absOffset = Math.abs(tzOffset);\nconst offsetHours = pad(Math.floor(absOffset / 60));\nconst offsetMinutes = pad(absOffset % 60);\nconst iso = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}${sign}${offsetHours}:${offsetMinutes}`;\nconst hourLabel = `${pad(now.getHours())}:00`;\nconst userId = $env.HOURLY_CHECKIN_USER_ID || 'marce';\nconst token = $env.HOURLY_CHECKIN_TOKEN || 'changeme';\nconst baseUrl = $env.HOURLY_CHECKIN_FRONTEND || 'https://TU_DOMINIO_FRONT';\nconst url = `${baseUrl}/checkin?user_id=${encodeURIComponent(userId)}&ts_hour=${encodeURIComponent(iso)}&token=${encodeURIComponent(token)}`;\nreturn [{ json: { ts_hour: iso, message: `Check-in de las ${hourLabel}\n${url}`, url, user_id: userId } }];"
+      },
+      "name": "Build Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 2,
+      "position": [520, 300]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "https://api.telegram.org/bot<token>/sendMessage",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\"chat_id\":\"<chat_id>\",\"text\":$json[\"message\"]}"
+      },
+      "name": "Send Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [800, 300]
+    }
+  ],
+  "connections": {
+    "Cron": {
+      "main": [
+        [
+          {
+            "node": "Build Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Message": {
+      "main": [
+        [
+          {
+            "node": "Send Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  }
+}
