@@ -8,7 +8,7 @@ type CheckinPayload = {
   emotion: string
   energy: string
   stress: string
-  note?: string | null
+  note?: string
   source: string
 }
 
@@ -91,20 +91,6 @@ const normalizeToHour = (date: Date) => {
 
 const pad2 = (value: number) => String(value).padStart(2, '0')
 
-const formatIsoWithOffset = (date: Date) => {
-  const tzOffset = -date.getTimezoneOffset()
-  const sign = tzOffset >= 0 ? '+' : '-'
-  const absOffset = Math.abs(tzOffset)
-  const offsetHours = pad2(Math.floor(absOffset / 60))
-  const offsetMinutes = pad2(absOffset % 60)
-
-  return (
-    `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}` +
-    `T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}` +
-    `${sign}${offsetHours}:${offsetMinutes}`
-  )
-}
-
 const formatHourLabel = (date: Date) => {
   if (Number.isNaN(date.getTime())) return '--:--'
   const label = date.toLocaleString('es-AR', {
@@ -134,6 +120,22 @@ const readErrorDetail = async (response: Response) => {
   return text
 }
 
+const submitCheckin = async (apiBaseUrl: string, token: string, payload: CheckinPayload) => {
+  const response = await fetch(`${apiBaseUrl}/checkins`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  })
+
+  if (!response.ok) {
+    const detail = await readErrorDetail(response)
+    throw new Error(detail || 'Error al guardar')
+  }
+}
+
 const buildMissingParamsMessage = (params: string[]) => {
   if (!params.length) return ''
   return `Faltan parametros en la URL: ${params.join(', ')}`
@@ -154,16 +156,13 @@ function CheckinPage() {
 
   const fallbackTsHour = useMemo(() => normalizeToHour(new Date()), [])
   const displayTsHour = normalizeToHour(parsedTsHour ?? fallbackTsHour)
-  const tsHourValue = tsHourParam && parsedTsHour ? tsHourParam : formatIsoWithOffset(fallbackTsHour)
-
   const [activity, setActivity] = useState(activityOptions[0])
   const [emotion, setEmotion] = useState(emotionOptions[0])
   const [energy, setEnergy] = useState(energyOptions[0])
   const [stress, setStress] = useState(stressOptions[0])
   const [note, setNote] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState('')
+  const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
+  const [error, setError] = useState<string | null>(null)
 
   const missingParams = [
     ...(userId ? [] : ['user_id']),
@@ -172,51 +171,38 @@ function CheckinPage() {
   ]
 
   const warningMessage = buildMissingParamsMessage(missingParams)
-  const canSubmit = Boolean(userId && token)
+  const canSubmit = Boolean(userId && token && tsHourParam && status !== 'saving')
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit) {
-      setError('Completa user_id y token en la URL.')
+      setError('Completa user_id, token y ts_hour en la URL.')
+      setStatus('error')
       return
     }
 
-    setError('')
-    setLoading(true)
-    setSaved(false)
+    setError(null)
+    setStatus('saving')
 
+    const trimmedNote = note.trim()
     const payload: CheckinPayload = {
       user_id: userId,
-      ts_hour: tsHourValue,
+      ts_hour: tsHourParam!,
       activity,
       emotion,
       energy,
       stress,
-      note: note.trim() ? note.trim() : null,
-      source: 'manual',
+      source: 'notificacion',
+      ...(trimmedNote ? { note: trimmedNote } : {}),
     }
 
     try {
-      const response = await fetch(`${apiBase}/checkins`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      })
-
-      if (!response.ok) {
-        const detail = await readErrorDetail(response)
-        throw new Error(detail || 'Error al guardar')
-      }
-
-      setSaved(true)
+      await submitCheckin(apiBase, token, payload)
+      setStatus('success')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error inesperado'
       setError(message)
-    } finally {
-      setLoading(false)
+      setStatus('error')
     }
   }
 
@@ -242,10 +228,10 @@ function CheckinPage() {
 
         {warningMessage ? <p className="warning">{warningMessage}</p> : null}
 
-        {saved ? (
+        {status === 'success' ? (
           <section className="success">
             <p className="success-text">Guardado ✅</p>
-            <button className="secondary" type="button" onClick={() => setSaved(false)}>
+            <button className="secondary" type="button" onClick={() => setStatus('idle')}>
               Editar
             </button>
           </section>
@@ -309,8 +295,8 @@ function CheckinPage() {
 
             {error ? <p className="error">{error}</p> : null}
 
-            <button type="submit" disabled={!canSubmit || loading}>
-              {loading ? 'Guardando...' : 'Guardar'}
+            <button type="submit" disabled={!canSubmit || status === 'saving'}>
+              {status === 'saving' ? 'Guardando...' : 'Guardar'}
             </button>
           </form>
         )}
