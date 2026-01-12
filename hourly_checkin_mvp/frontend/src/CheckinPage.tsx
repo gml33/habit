@@ -1,9 +1,8 @@
-import { useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useLocation } from 'react-router-dom'
-import { formatDateTimeAR } from './utils/datetime'
+import { formatDateShort, formatHourRange, parseIsoToDate } from './utils/datetime'
 
 type CheckinPayload = {
-  user_id: string
   ts_hour: string
   activity: string
   emotion: string
@@ -11,6 +10,14 @@ type CheckinPayload = {
   stress: string
   note?: string
   source: string
+}
+
+type CheckinResponse = {
+  id: number
+  user_id: string
+  ts_hour_local?: string
+  ts_hour_utc?: string
+  created_at_local?: string
 }
 
 const activityOptions = [
@@ -110,6 +117,8 @@ const submitCheckin = async (apiBaseUrl: string, token: string, payload: Checkin
     const detail = await readErrorDetail(response)
     throw new Error(detail || 'Error al guardar')
   }
+
+  return (await response.json()) as CheckinResponse
 }
 
 const buildMissingParamsMessage = (params: string[]) => {
@@ -124,10 +133,6 @@ function CheckinPage() {
   const token = (params.get('token') || '').trim()
   const tsHourParam = params.get('ts_hour')
 
-  const displayHourLabel = useMemo(() => {
-    if (!tsHourParam) return '—'
-    return formatDateTimeAR(tsHourParam)
-  }, [tsHourParam])
   const [activity, setActivity] = useState(activityOptions[0])
   const [emotion, setEmotion] = useState(emotionOptions[0])
   const [energy, setEnergy] = useState(energyOptions[0])
@@ -135,6 +140,14 @@ function CheckinPage() {
   const [note, setNote] = useState('')
   const [status, setStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const [savedCheckin, setSavedCheckin] = useState<CheckinResponse | null>(null)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
+
+  useEffect(() => {
+    setSavedCheckin(null)
+    setSaveMessage(null)
+    setStatus('idle')
+  }, [tsHourParam])
 
   const missingParams = [
     ...(userId ? [] : ['user_id']),
@@ -143,22 +156,36 @@ function CheckinPage() {
   ]
 
   const warningMessage = buildMissingParamsMessage(missingParams)
-  const canSubmit = Boolean(userId && token && tsHourParam && status !== 'saving')
+  const displayIso =
+    savedCheckin?.ts_hour_local || tsHourParam || savedCheckin?.ts_hour_utc || null
+  const displayDate = useMemo(() => parseIsoToDate(displayIso), [displayIso])
+  const hasIso = Boolean(displayIso)
+  const isHourValid = Boolean(displayDate)
+  const dateLabel = displayDate ? formatDateShort(displayDate) : hasIso ? 'Hora invalida' : '—'
+  const rangeLabel = displayDate ? formatHourRange(displayDate) : hasIso ? 'Hora invalida' : '—'
+
+  const canSubmit = Boolean(userId && token && tsHourParam && isHourValid && status !== 'saving')
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     if (!canSubmit) {
-      setError('Completa user_id, token y ts_hour en la URL.')
+      if (!userId || !token || !tsHourParam) {
+        setError('Completa user_id, token y ts_hour en la URL.')
+      } else if (!isHourValid) {
+        setError('ts_hour invalido.')
+      } else {
+        setError('Completa los datos requeridos.')
+      }
       setStatus('error')
       return
     }
 
     setError(null)
     setStatus('saving')
+    setSaveMessage(null)
 
     const trimmedNote = note.trim()
     const payload: CheckinPayload = {
-      user_id: userId,
       ts_hour: tsHourParam!,
       activity,
       emotion,
@@ -169,7 +196,11 @@ function CheckinPage() {
     }
 
     try {
-      await submitCheckin(apiBase, token, payload)
+      const response = await submitCheckin(apiBase, token, payload)
+      const message =
+        savedCheckin && response.id === savedCheckin.id ? 'Actualizado ✅' : 'Guardado ✅'
+      setSavedCheckin(response)
+      setSaveMessage(message)
       setStatus('success')
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Error inesperado'
@@ -193,20 +224,25 @@ function CheckinPage() {
             <strong>{userId || '—'}</strong>
           </div>
           <div>
+            <span className="meta-label">Fecha</span>
+            <strong>{dateLabel}</strong>
+          </div>
+          <div>
             <span className="meta-label">Hora</span>
-            <strong>
-              {displayHourLabel === 'Hora invalida' || displayHourLabel === '—'
-                ? displayHourLabel
-                : `${displayHourLabel} (UTC-3)`}
-            </strong>
+            <strong>{rangeLabel}</strong>
           </div>
         </section>
+
+        <p className="subtle">Hora local (UTC-3)</p>
+        <p className="subtle">
+          Un registro por hora. Si lo editas dentro de la misma hora, se actualiza.
+        </p>
 
         {warningMessage ? <p className="warning">{warningMessage}</p> : null}
 
         {status === 'success' ? (
           <section className="success">
-            <p className="success-text">Guardado ✅</p>
+            <p className="success-text">{saveMessage || 'Guardado ✅'}</p>
             <button className="secondary" type="button" onClick={() => setStatus('idle')}>
               Editar
             </button>

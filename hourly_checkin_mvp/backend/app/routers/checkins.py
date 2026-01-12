@@ -1,4 +1,4 @@
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..db import get_db
 from ..deps import get_current_user
-from ..time_utils import floor_to_hour_local, to_local_iso, to_utc, validate_timezone
+from ..time_utils import datetime_to_utc_iso, floor_to_hour_local, to_local_iso, to_utc, validate_timezone
 
 router = APIRouter(prefix="/checkins", tags=["checkins"])
 
@@ -34,6 +34,39 @@ def build_checkin_out(record: models.Checkin, user_tz) -> schemas.CheckinOut:
         source=record.source,
         created_at_utc=record.created_at,
         created_at_local=to_local_iso(record.created_at, user_tz),
+    )
+
+
+@router.get("/current", response_model=schemas.CheckinCurrentResponse)
+def get_current_checkin(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        user_tz = validate_timezone(current_user.timezone)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    now_utc = datetime.now(timezone.utc)
+    current_hour_local = floor_to_hour_local(now_utc, user_tz)
+    current_hour_utc = to_utc(current_hour_local, user_tz)
+
+    record = (
+        db.query(models.Checkin)
+        .filter(
+            models.Checkin.user_id == current_user.user_id,
+            models.Checkin.ts_hour_utc == current_hour_utc,
+        )
+        .first()
+    )
+
+    checkin = build_checkin_out(record, user_tz) if record else None
+
+    return schemas.CheckinCurrentResponse(
+        ts_hour_local=to_local_iso(current_hour_utc, user_tz),
+        ts_hour_utc=datetime_to_utc_iso(current_hour_utc),
+        user_timezone=current_user.timezone,
+        checkin=checkin,
     )
 
 

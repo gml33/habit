@@ -94,6 +94,13 @@ class CheckinOut(BaseModel):
         return datetime_to_utc_iso(value)
 
 
+class CheckinCurrentResponse(BaseModel):
+    ts_hour_local: str
+    ts_hour_utc: str
+    user_timezone: str
+    checkin: CheckinOut | None
+
+
 class UserCreate(BaseModel):
     user_id: str = Field(min_length=3, max_length=64)
     display_name: str | None = Field(default=None, max_length=120)

@@ -1,0 +1,341 @@
+PROMPT DE CONTINUIDAD - HOURLY CHECK-IN (ESTADO ACTUAL)
+========================================================
+
+OBJETIVO
+Continuar el proyecto "Hourly Check-in" (backend FastAPI + frontend Vite/React TS) hasta el punto actual.
+El backend es multiusuario con token por usuario, normaliza por hora local del usuario y persiste en UTC.
+El frontend consume el backend local y muestra horarios en formato local amigable.
+
+ESTRUCTURA DEL PROYECTO
+- hourly_checkin_mvp/
+  - backend/
+  - frontend/
+  - docker-compose.yml
+  - README_LOCAL_DOCKER.md
+  - n8n/
+
+BACKEND (FASTAPI + SQLALCHEMY + SQLITE)
+---------------------------------------
+Estado actual (resumen):
+1) Multiusuario:
+   - Tabla users con: user_id, display_name, timezone, api_token, created_at
+   - Token por usuario (Authorization: Bearer <token>).
+2) Checkins:
+   - Tabla checkins con: user_id (FK users.user_id), ts_hour_utc, activity, emotion, energy, stress, note, source, created_at.
+   - Unique constraint: (user_id, ts_hour_utc).
+3) Zona horaria por usuario:
+   - Normalizacion: floor por hora local del usuario -> guardar en UTC.
+   - Respuesta: ts_hour_local/created_at_local en timezone del usuario.
+4) Endpoint adicional:
+   - GET /checkins/current devuelve el checkin de la hora local actual (o null si no existe).
+
+Archivos clave:
+- backend/app/models.py
+- backend/app/schemas.py
+- backend/app/time_utils.py
+- backend/app/deps.py
+- backend/app/routers/checkins.py
+- backend/app/routers/users.py
+- backend/app/main.py
+- backend/README.md
+
+IMPORTANTE (DB)
+- El esquema cambio. Si venis de la version previa:
+  BORRAR el SQLite viejo: backend/hourly_checkin.db
+- No hay migraciones automaticas. Se recrea al iniciar el backend.
+
+ENDPOINTS ACTUALES (BACKEND)
+- GET /health
+- POST /users
+- GET /users/me
+- PATCH /users/me
+- POST /checkins
+- GET /checkins?from=...&to=...&day=YYYY-MM-DD
+- GET /checkins/current
+
+Ejemplo de request/respuesta (checkins):
+- Request: ts_hour con offset local (ej -03:00)
+- DB guarda ts_hour_utc en UTC.
+- Response incluye:
+  ts_hour_utc (Z), ts_hour_local (-03 o timezone del usuario)
+  created_at_utc, created_at_local
+
+BACKEND - COMANDOS (LOCAL)
+1) Crear entorno y dependencias:
+   cd hourly_checkin_mvp/backend
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+
+2) Variables de entorno:
+   cp .env.example .env
+   (No usar API_TOKEN, ya no existe.)
+
+3) Borrar DB si es necesario:
+   rm hourly_checkin.db
+
+4) Levantar backend:
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+BACKEND - CURLS DE PRUEBA
+1) Crear usuario (devuelve api_token):
+   curl -X POST http://localhost:8000/users \
+     -H "Content-Type: application/json" \
+     -d '{"user_id":"marce","timezone":"America/Argentina/Buenos_Aires"}'
+
+2) Guardar checkin (usa token):
+   curl -X POST http://localhost:8000/checkins \
+     -H "Authorization: Bearer <TOKEN>" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "ts_hour": "2026-01-10T15:37:45-03:00",
+       "activity": "trabajo",
+       "emotion": "bien",
+       "energy": "ok",
+       "stress": "medio",
+       "note": "nota",
+       "source": "notificacion"
+     }'
+
+3) Obtener hora actual:
+   curl -H "Authorization: Bearer <TOKEN>" \
+     http://localhost:8000/checkins/current
+
+4) Rango:
+   curl -H "Authorization: Bearer <TOKEN>" \
+     "http://localhost:8000/checkins?from=2026-01-10T00:00:00-03:00&to=2026-01-10T23:59:59-03:00"
+
+FRONTEND (VITE + REACT + TS)
+----------------------------
+Estado actual (resumen):
+1) Pagina /checkin lee query params:
+   - user_id
+   - token
+   - ts_hour
+2) Usa VITE_API_BASE_URL para llamar al backend.
+3) UI muestra fecha/hora local amigable:
+   - Fecha: "Sab 10/01"
+   - Rango: "15:00 – 16:00"
+   - Subtexto: "Hora local (UTC-3)"
+4) Mensaje de guardado:
+   - "Guardado ✅" si nuevo
+   - "Actualizado ✅" si upsert (mismo id)
+5) No usa localStorage para token/user_id.
+6) Enums en español (activity/emotion/energy/stress/source).
+
+Archivos clave:
+- frontend/src/CheckinPage.tsx
+- frontend/src/utils/datetime.ts
+- frontend/.env.local
+
+FRONTEND - COMANDOS (LOCAL)
+1) Instalar dependencias:
+   cd hourly_checkin_mvp/frontend
+   npm install
+
+2) Variables:
+   crear frontend/.env.local con:
+   VITE_API_BASE_URL=http://localhost:8000
+
+3) Levantar frontend:
+   npm run dev
+
+4) Abrir en navegador:
+   http://localhost:5173/checkin?user_id=marce&token=<TOKEN>&ts_hour=2026-01-10T15:00:00-03:00
+
+DOCKER (OPCIONAL)
+-----------------
+Archivos:
+- docker-compose.yml
+- backend/Dockerfile
+- frontend/Dockerfile
+- frontend/nginx.conf
+- frontend/.env.production
+
+Comando:
+  cd hourly_checkin_mvp
+  docker compose up --build
+
+Luego:
+  curl http://localhost:8000/health
+  Abrir: http://localhost:5173/checkin?user_id=marce&token=<TOKEN>&ts_hour=2026-01-10T15:00:00-03:00
+
+NOTAS IMPORTANTES
+- La DB SQLite se guarda en backend/hourly_checkin.db.
+- La API es multiusuario: el token identifica al usuario. El frontend NO envia user_id en el body.
+- Timestamps:
+  - DB: UTC (ts_hour_utc, created_at)
+  - API: devuelve campos local y utc.
+- En caso de errores de esquema:
+  - borrar hourly_checkin.db y reiniciar.
+
+ENTREGABLES QUE YA EXISTEN
+- backend/routers/users.py con endpoints /users
+- backend/routers/checkins.py con /checkins y /checkins/current
+- backend/time_utils.py con manejo de timezone
+- frontend/CheckinPage con UI local, rango horario, mensajes guardado/actualizado
+- docker-compose y Dockerfiles
+
+DETALLE DE MODELOS (DB)
+USERS:
+- id (int pk)
+- user_id (string unico, index)
+- display_name (string opcional)
+- timezone (IANA, default America/Argentina/Buenos_Aires)
+- api_token (string unico, index)
+- created_at (UTC)
+
+CHECKINS:
+- id (int pk)
+- user_id (FK users.user_id)
+- ts_hour_utc (datetime UTC)
+- activity, emotion, energy, stress (enums en espanol)
+- note (opcional, max 140)
+- source (enum)
+- created_at (UTC)
+
+Unique constraint:
+- (user_id, ts_hour_utc)
+
+ENUMS (VALORES VALIDOS)
+activity:
+- dormir, trabajo, pasatiempos, ejercicio, tiempo_libre, pareja, familia, tareas, viaje, otros
+emotion:
+- bien, feliz, entusiasmado, triste, sensible, ansioso, inseguro, enojado, irritable, neutral, emocional
+energy:
+- cansado, ok, con_energia
+stress:
+- bajo, medio, alto
+source:
+- notificacion, manual, carga_historica
+
+AUTENTICACION
+- Todo /checkins y /users/me requiere Authorization: Bearer <api_token>.
+- El user_id del body NO se usa (se deriva del token).
+- Si el token es invalido: 401 "Token invalido".
+
+REGLAS DE TIMEZONE
+- Entrada ts_hour:
+  - Si viene con offset: se respeta ese offset para calcular la hora local del usuario.
+  - Si viene naive: se asume la timezone del usuario.
+- Normalizacion:
+  - floor por hora local del usuario (min/sec/micro = 0).
+  - convertir a UTC para persistir (ts_hour_utc).
+- Respuestas:
+  - ts_hour_utc (Z)
+  - ts_hour_local (offset local del usuario)
+  - created_at_utc (Z)
+  - created_at_local (offset local del usuario)
+
+ESQUEMAS DE RESPUESTA (CHECKINS)
+CheckinOut:
+- id, user_id
+- ts_hour_utc (string ISO con Z)
+- ts_hour_local (string ISO con offset local)
+- activity, emotion, energy, stress, note, source
+- created_at_utc (string ISO con Z)
+- created_at_local (string ISO con offset local)
+
+CheckinCurrentResponse:
+- ts_hour_local, ts_hour_utc, user_timezone
+- checkin: CheckinOut | null
+
+ENDPOINTS DETALLE
+POST /users
+- Body: { user_id, display_name?, timezone? }
+- Response: user_id, display_name, timezone, api_token, created_at
+
+GET /users/me
+- Response: user_id, display_name, timezone, created_at
+
+PATCH /users/me
+- Body: { display_name?, timezone? }
+- Response: user_id, display_name, timezone, created_at
+
+POST /checkins
+- Body: { ts_hour, activity, emotion, energy, stress, note?, source }
+- Upsert por (user_id, ts_hour_utc).
+
+GET /checkins
+- Query: from, to, day
+- from/to se interpretan en timezone del usuario si son naive.
+- day=YYYY-MM-DD usa el dia local del usuario (00:00 a 23:59).
+
+GET /checkins/current
+- Responde checkin de la hora local actual (o null).
+
+FRONTEND - UX Y LOGICA
+- Se muestra fecha y rango:
+  - Fecha: "Sab 10/01"
+  - Rango: "15:00 – 16:00"
+  - Subtexto: "Hora local (UTC-3)"
+- Mensaje de guardado:
+  - "Guardado ✅" si nuevo id
+  - "Actualizado ✅" si mismo id
+- Fallback si ts_hour invalido:
+  - "Hora invalida" y se bloquea el submit.
+- No se usa localStorage para token/user_id.
+
+FRONTEND - MANEJO DE RESPUESTA
+- Se usa la respuesta del POST para decidir guardado vs actualizado.
+- Se usa ts_hour_local si existe, sino ts_hour_utc/ts_hour como fallback.
+
+CONFIGS DE ENTORNO
+backend/.env.example:
+- DB_URL=sqlite:///./hourly_checkin.db
+- CORS_ALLOW_ORIGINS=http://localhost:5173
+
+frontend/.env.local (dev):
+- VITE_API_BASE_URL=http://localhost:8000
+
+frontend/.env.production (docker build):
+- VITE_API_BASE_URL=http://localhost:8000
+
+DOCKER - DETALLE
+- docker-compose.yml:
+  - api -> backend, expone 8000, volumen sqlite
+  - web -> frontend, expone 5173:80
+- Si cambia VITE_API_BASE_URL, ajustar:
+  - docker-compose.yml (build arg) o frontend/.env.production
+
+N8N (OPCIONAL)
+- workflow hourly-checkin.json usa:
+  - HOURLY_CHECKIN_USER_ID
+  - HOURLY_CHECKIN_TOKEN (token del usuario, de POST /users)
+  - HOURLY_CHECKIN_FRONTEND
+
+TROUBLESHOOTING FRECUENTE
+1) Error Settings api_token (pydantic extra):
+   - Remover API_TOKEN de backend/.env (ya no existe).
+2) sqlite3 no such column:
+   - DB vieja. Borrar backend/hourly_checkin.db y reiniciar.
+3) HTTP 401:
+   - Token invalido o faltante. Usar Authorization: Bearer <TOKEN>.
+4) Hora rara en UI:
+   - Verificar que la URL tiene ts_hour valido o usar ts_hour_local del backend.
+
+CHECKLIST DE PRUEBA MANUAL
+1) Crear usuario y token (POST /users).
+2) Abrir frontend con token y ts_hour.
+3) Guardar checkin y ver "Guardado ✅".
+4) Volver a guardar en la misma hora y ver "Actualizado ✅".
+5) GET /checkins/current devuelve el mismo id.
+6) Cambiar timezone del usuario (PATCH /users/me) y verificar ts_hour_local.
+
+ROADMAP / PENDIENTES SUGERIDOS
+1) Sincronizar frontend con GET /checkins/current para precargar estado.
+2) Agregar pantalla simple de crear usuario y mostrar token.
+3) Agregar vista de historial (lista diaria) consumiendo GET /checkins?day=...
+4) Agregar validaciones UX: estados de carga, errores de red, reintentos.
+5) Evaluar proxy Nginx para evitar VITE_API_BASE_URL hardcoded.
+
+MATRIZ RAPIDA DE ENTRADAS -> SALIDAS
+- ts_hour input: 2026-01-10T15:37:45-03:00
+  - normalizado local: 2026-01-10T15:00:00-03:00
+  - guardado UTC: 2026-01-10T18:00:00Z
+  - respuesta local: 2026-01-10T15:00:00-03:00
+- ts_hour input naive: 2026-01-10T15:37:45
+  - se asume timezone del usuario
+  - se normaliza y guarda igual que arriba
+
+FIN DEL PROMPT

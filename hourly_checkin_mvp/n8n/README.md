@@ -7,7 +7,7 @@
 
 ## Variables de entorno usadas en el Function node
 - `HOURLY_CHECKIN_USER_ID`: por defecto `marce`
-- `HOURLY_CHECKIN_TOKEN`: token para el link
+- `HOURLY_CHECKIN_TOKEN`: token del usuario (se obtiene en `POST /users`)
 - `HOURLY_CHECKIN_FRONTEND`: URL base del frontend (ej. `https://tu-dominio.com`)
 
 ## Cron
