@@ -1,0 +1,38 @@
+PROMPT PARA REANUDAR DESARROLLO - HOURLY CHECK-IN
+==================================================
+
+Contexto breve:
+- Backend FastAPI multiusuario con token por usuario y timezone.
+- Checkins se normalizan por hora local del usuario y se guardan en UTC (ts_hour_utc).
+- API responde ts_hour_local/created_at_local.
+- Frontend Vite/React usa token y ts_hour en URL, muestra fecha/rango local y estado Guardado/Actualizado.
+
+Que ya existe:
+- Endpoints: /users, /users/me, /checkins, /checkins/current, /health
+- Dockerfiles y docker-compose para levantar local
+- README y prompt extendido en `ESTADO_PROYECTO_PROMPT.txt`
+
+Comandos para retomar (LOCAL)
+1) Backend:
+   cd hourly_checkin_mvp/backend
+   source .venv/bin/activate
+   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+2) Frontend:
+   cd hourly_checkin_mvp/frontend
+   npm run dev
+
+3) Crear usuario y obtener token:
+   curl -X POST http://localhost:8000/users \
+     -H "Content-Type: application/json" \
+     -d '{"user_id":"marce","timezone":"America/Argentina/Buenos_Aires"}'
+
+4) Abrir frontend:
+   http://localhost:5173/checkin?user_id=marce&token=<TOKEN>&ts_hour=2026-01-10T15:00:00-03:00
+
+Notas:
+- Si falla por columnas faltantes: borrar `backend/hourly_checkin.db` y reiniciar.
+- El frontend usa `VITE_API_BASE_URL` desde `.env.local`.
+
+Para detalles completos ver:
+- `ESTADO_PROYECTO_PROMPT.txt`
